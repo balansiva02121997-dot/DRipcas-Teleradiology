@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>DRipACS DICOM Viewer</title>
+<script src="https://unpkg.com/dicom-parser@1.8.21/dist/dicomParser.min.js"></script>
+<script src="https://unpkg.com/cornerstone-core@2.6.1/dist/cornerstone.min.js"></script>
+<script src="https://unpkg.com/cornerstone-math@0.1.10/dist/cornerstoneMath.min.js"></script>
+<script src="https://unpkg.com/cornerstone-wado-image-loader@4.13.2/dist/cornerstoneWADOImageLoader.bundle.min.js"></script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#090d12;color:#e9eef5;font:14px Arial,sans-serif;overflow:hidden}
+.app{height:100vh;display:grid;grid-template-rows:auto 1fr auto}.top{background:#111820;border-bottom:1px solid #2a3540;padding:9px 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}.brand{font-weight:700;font-size:17px}.patient{opacity:.9}.toolbar{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto}button,select{background:#1b2631;color:#eef;border:1px solid #3a4652;border-radius:5px;padding:7px 9px;cursor:pointer}button:hover{background:#273542}.main{min-height:0;display:grid;grid-template-columns:250px 1fr 300px}.side{background:#10161d;border-right:1px solid #29333d;overflow:auto;padding:9px}.right{border-left:1px solid #29333d}.side h3{margin:5px 0 9px;font-size:13px;color:#aeb9c5}.series{border:1px solid #303b46;border-radius:6px;margin-bottom:7px;padding:9px;cursor:pointer}.series.active{border-color:#3b82f6;background:#172333}.series b{display:block}.thumbs{display:flex;gap:6px;overflow:auto;padding:7px 0}.thumb{width:70px;height:60px;flex:0 0 70px;background:#000;border:1px solid #39444f;display:grid;place-items:center;cursor:pointer;font-size:11px;color:#9da8b4}.thumb.active{border:2px solid #3b82f6}.viewer-wrap{min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;position:relative}.viewport{width:100%;height:100%;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}.dicom{width:100%;height:100%;background:#000}.overlay{position:absolute;left:12px;top:10px;pointer-events:none;line-height:1.5;text-shadow:0 1px 2px #000}.overlay.righttxt{left:auto;right:12px;text-align:right}.status{position:absolute;bottom:8px;left:10px;background:#000a;padding:5px 7px;border-radius:4px;font-size:12px}.panel{padding:10px;overflow:auto}.panel label{display:block;color:#9eabb8;margin:10px 0 5px}.panel input,.panel textarea{width:100%;background:#0b1117;color:#eee;border:1px solid #36414c;border-radius:5px;padding:8px}.panel textarea{min-height:110px;resize:vertical}.footer{background:#111820;border-top:1px solid #2a3540;padding:7px 10px;color:#9eabb8;display:flex;justify-content:space-between;gap:8px}.tool-on{background:#2563eb!important;border-color:#60a5fa!important}@media(max-width:900px){.main{grid-template-columns:180px 1fr}.right{display:none}}@media(max-width:600px){.main{grid-template-columns:1fr}.side{display:none}.top{padding:7px}.toolbar{margin-left:0;width:100%}.toolbar button{flex:1}.brand{font-size:15px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="brand">DRipACS · DICOM Viewer</div><div id="patient" class="patient">Loading study…</div><div class="toolbar"><button data-tool="Wwwc">W/L</button><button data-tool="Pan">Pan</button><button data-tool="Zoom">Zoom</button><button data-tool="Probe">HU</button><button onclick="resetView()">Reset</button><button onclick="fitView()">Fit</button><button onclick="prevImage()">◀</button><button onclick="nextImage()">▶</button></div></header>
+<main class="main"><aside class="side"><h3>SERIES</h3><div id="seriesList">Loading…</div></aside><section class="viewer-wrap"><div class="viewport"><div id="dicomImage" class="dicom"></div><div id="ov" class="overlay"></div><div id="ovr" class="overlay righttxt"></div><div id="status" class="status">Ready</div></div></section><aside class="side right"><div class="panel"><h3>STUDY INFORMATION</h3><div id="info">Loading…</div><h3 style="margin-top:18px">REPORT</h3><label>Findings</label><textarea id="findings" placeholder="Enter findings"></textarea><label>Impression</label><textarea id="impression" placeholder="Enter impression"></textarea><button style="width:100%;margin-top:8px" onclick="saveReport()">Save Report</button><p id="reportStatus" style="color:#8fd18f"></p></div></aside></main>
+<footer class="footer"><span id="seriesInfo">Series</span><span id="imageInfo">Image</span></footer>
+</div>
+<script>
+const TOKEN="__TOKEN__";
+const element=document.getElementById('dicomImage');
+let study=null, series=[], currentSeries=0, currentIndex=0, currentImageId=null;
+const toolMap={Wwwc:'Wwwc',Pan:'Pan',Zoom:'Zoom',Probe:'Probe'};
+function setStatus(x){document.getElementById('status').textContent=x}
+function api(p,opt){return fetch(p,opt).then(r=>{if(!r.ok)throw new Error(r.status+' '+r.statusText);return r.json()})}
+function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function imageId(s,n){return 'wadouri:'+location.origin+'/api/dicom/'+encodeURIComponent(TOKEN)+'/'+encodeURIComponent(s.uid)+'/'+encodeURIComponent(n)}
+async function boot(){
+ try{
+  cornerstoneWADOImageLoader.external.cornerstone=cornerstone;
+  cornerstoneWADOImageLoader.external.dicomParser=dicomParser;
+  cornerstoneWADOImageLoader.configure({useWebWorkers:true});
+  cornerstone.enable(element);
+  ['Wwwc','Pan','Zoom','Probe'].forEach(t=>cornerstoneToolsSetup(t));
+  study=await api('/api/study/'+encodeURIComponent(TOKEN));
+  document.getElementById('patient').textContent=(study.pname||'Unknown Patient')+' · '+(study.description||study.modality||'Study');
+  document.getElementById('info').innerHTML='<b>Patient:</b> '+esc(study.pname||'-')+'<br><b>ID:</b> '+esc(study.pid||'-')+'<br><b>Date:</b> '+esc(study.date||'-')+'<br><b>Modality:</b> '+esc(study.modality||'-');
+  series=await api('/api/series/'+encodeURIComponent(TOKEN)); renderSeries();
+  if(series.length) selectSeries(0); else setStatus('No DICOM series found');
+ }catch(e){setStatus('Viewer error: '+e.message);console.error(e)}
+}
+function cornerstoneToolsSetup(t){
+ // cornerstone-tools is intentionally not required; core built-in viewport interactions are implemented below.
+ document.querySelector('[data-tool="'+t+'"]')?.addEventListener('click',()=>activateTool(t));
+}
+let activeTool='Wwwc', drag=false,lastX=0,lastY=0;
+function activateTool(t){activeTool=t;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('tool-on',b.dataset.tool===t));setStatus(t==='Wwwc'?'Window/Level':t)}
+function renderSeries(){
+ const box=document.getElementById('seriesList');box.innerHTML='';
+ series.forEach((s,i)=>{const d=document.createElement('div');d.className='series'+(i===currentSeries?' active':'');d.innerHTML='<b>'+esc(s.number||('Series '+(i+1)))+'</b>'+esc(s.description||s.modality||'')+'<br><small>'+s.count+' images'+(s.bodyPart?' · '+esc(s.bodyPart):'')+'</small>';d.onclick=()=>selectSeries(i);box.appendChild(d)})
+}
+async function selectSeries(i){currentSeries=i;currentIndex=0;renderSeries();await loadCurrent()}
+async function loadCurrent(){
+ const s=series[currentSeries];if(!s||!s.files.length)return;const f=s.files[currentIndex];currentImageId=imageId(s,f.file);setStatus('Loading image…');
+ try{const img=await cornerstone.loadAndCacheImage(currentImageId);cornerstone.displayImage(element,img);cornerstone.fitToWindow(element);updateLabels(img,f);setStatus('Ready');renderThumbs()}catch(e){setStatus('DICOM load failed: '+e.message);console.error(e)}
+}
+function renderThumbs(){const s=series[currentSeries];let old=document.getElementById('thumbs');if(old)old.remove();const wrap=document.createElement('div');wrap.id='thumbs';wrap.className='thumbs';s.files.slice(0,80).forEach((f,i)=>{const d=document.createElement('div');d.className='thumb'+(i===currentIndex?' active':'');d.textContent='#'+(f.instance||i+1);d.onclick=()=>{currentIndex=i;loadCurrent()};wrap.appendChild(d)});document.querySelector('.side').appendChild(wrap)}
+function updateLabels(img,f){document.getElementById('ov').innerHTML='Patient: '+esc(study.pname||'-')+'<br>'+esc(study.description||'')+'<br>Series: '+esc(series[currentSeries].number||'-')+' · Image: '+(currentIndex+1)+'/'+series[currentSeries].count;document.getElementById('ovr').innerHTML='W: '+Math.round(img.windowWidth||0)+'<br>C: '+Math.round(img.windowCenter||0)+'<br>Instance: '+esc(f.instance||'-');document.getElementById('seriesInfo').textContent=(series[currentSeries].description||'Series')+' · '+series[currentSeries].count+' images';document.getElementById('imageInfo').textContent='Image '+(currentIndex+1)+' / '+series[currentSeries].count}
+function prevImage(){if(!series.length)return;currentIndex=Math.max(0,currentIndex-1);loadCurrent()}
+function nextImage(){if(!series.length)return;currentIndex=Math.min(series[currentSeries].files.length-1,currentIndex+1);loadCurrent()}
+function resetView(){if(currentImageId){cornerstone.reset(element);loadCurrent()}}
+function fitView(){if(element)cornerstone.fitToWindow(element)}
+async function saveReport(){
+ if(!study)return;const body={uid:study.uid,findings:document.getElementById('findings').value,impression:document.getElementById('impression').value};
+ try{const r=await fetch('/api/report/'+encodeURIComponent(TOKEN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Report API unavailable');document.getElementById('reportStatus').textContent='Report saved';}catch(e){document.getElementById('reportStatus').textContent='Report save unavailable in this server version';}
+}
+element.addEventListener('mousedown',e=>{drag=true;lastX=e.clientX;lastY=e.clientY});window.addEventListener('mouseup',()=>drag=false);window.addEventListener('mousemove',e=>{if(!drag||!currentImageId)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;try{if(activeTool==='Pan'){const vp=cornerstone.getViewport(element);vp.translation.x+=(dx/element.clientWidth)*vp.displayedArea.tlhc.x*2;vp.translation.y+=(dy/element.clientHeight)*vp.displayedArea.brhc.y*2;cornerstone.setViewport(element,vp)}else if(activeTool==='Zoom'){const vp=cornerstone.getViewport(element);vp.scale=Math.max(.1,Math.min(20,vp.scale*(1+dy*-0.01)));cornerstone.setViewport(element,vp)}else if(activeTool==='Wwwc'){const vp=cornerstone.getViewport(element);vp.voi.windowWidth=Math.max(1,vp.voi.windowWidth+dx*2);vp.voi.windowCenter+=dy*2;cornerstone.setViewport(element,vp)}}catch(err){}});
+element.addEventListener('wheel',e=>{e.preventDefault();const vp=cornerstone.getViewport(element);vp.scale=Math.max(.1,Math.min(20,vp.scale*(e.deltaY<0?1.1:.9)));cornerstone.setViewport(element,vp)},{passive:false});
+document.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')prevImage();if(e.key==='ArrowRight')nextImage();if(e.key==='r'||e.key==='R')resetView()});
+activateTool('Wwwc');boot();
+</script>
+</body></html>
