@@ -1,78 +1,52 @@
 # DRipACS Teleradiology
 
-Secure DICOM study sharing portal with a browser-based DICOM viewer, study/series APIs, password-protected patient links, and report entry.
+Local Windows DICOM receiver with a password-protected patient web viewer.
 
-## Features
+## Current secure architecture
 
-- Flask web application
-- DICOM receiving through pynetdicom
-- SQLite study/link/report storage
-- Expiring secure study links
-- Password-protected patient access
-- Browser DICOM viewer using Cornerstone and DICOM Parser
-- Study, series, image metadata and report APIs
-- Windows startup script
-- Environment-based configuration
+`app_secure.py` is now the default server started by `start_server.bat`.
 
-## Project layout
+Flow:
+
+1. Raster Router / modality sends DICOM to `SECURELINK:11112`.
+2. The server stores DICOM under `received/<StudyUID>/<SeriesUID>/`.
+3. A random 32-byte URL token is created for the study and expires after 30 days.
+4. The configured `LINK_PASSWORD` is stored only as a strong password hash in SQLite.
+5. The patient opens `/p/<token>` and enters the common patient-link password.
+6. A signed Flask session is created only after successful authentication.
+7. Viewer and every DICOM/metadata/report API verify both the token and authenticated session.
+8. DICOM access is restricted to the series belonging to that study.
+
+## Credentials and secrets
+
+Do not commit `.env`, the SQLite database, or patient DICOM files.
+
+Required environment variables:
+
+- `FLASK_SECRET_KEY` — long random secret used to sign Flask sessions.
+- `ADMIN_PASSWORD_HASH` — Werkzeug password hash for the admin account.
+- `LINK_PASSWORD` — fixed/common patient-link password for all studies.
+- `PUBLIC_URL` — public HTTPS URL used when generating links.
+
+The repository intentionally contains placeholders in `.env.example`, not real credentials.
+
+## Windows setup
 
 ```text
-.
-├── app.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-├── start_server.bat
-├── index.html
-└── templates/
-    └── viewer.html
+python -m pip install -r requirements.txt
+python app_secure.py
 ```
 
-## Local setup
+Or double-click `start_server.bat`.
 
-1. Install Python 3.11+.
-2. Copy `.env.example` to `.env` and set your secrets/configuration.
-3. Create a virtual environment and install dependencies:
+Admin: `http://127.0.0.1:5000/admin`
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+DICOM: `SECURELINK` on port `11112`.
 
-4. Start the server:
+## Security notes
 
-```powershell
-python app.py
-```
+Use HTTPS for remote patient access. Keep `FLASK_SECRET_KEY`, `ADMIN_PASSWORD_HASH`, and `LINK_PASSWORD` outside GitHub. Rotate credentials if they have ever been committed publicly. The old `app.py` is retained as a legacy backup; production startup now uses `app_secure.py`.
 
-Or on Windows, run `start_server.bat`.
+## Viewer
 
-The Flask web server defaults to port `5000`; the DICOM listener defaults to `11112`.
-
-## Environment variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `PUBLIC_URL` | Public base URL used in secure links | `https://dripacs.is-a.dev` |
-| `FLASK_SECRET_KEY` | Flask session signing secret | Random per process |
-| `LINK_PASSWORD` | Password for generated patient links | `siva` |
-| `ADMIN_PASSWORD` | Admin page password | `change-me` |
-| `DICOM_AE_TITLE` | DICOM Application Entity title | `SECURELINK` |
-| `DICOM_PORT` | DICOM listener port | `11112` |
-| `PORT` | Flask HTTP port | `5000` |
-| `DRIPACS_DB` | SQLite database path | `secure_links.db` |
-
-## Security
-
-Do not commit `.env`, `secure_links.db`, or patient DICOM files. The repository `.gitignore` excludes these by default. Use a strong `FLASK_SECRET_KEY` and `ADMIN_PASSWORD` outside local testing.
-
-This project is intended to be deployed behind HTTPS and appropriate network access controls. Review authentication, authorization, audit logging, encryption, retention, and regulatory requirements before clinical production use.
-
-## DICOM workflow
-
-A DICOM sender can send studies to AE Title `SECURELINK` on the configured DICOM port. Received studies are indexed into SQLite and can be exposed through a secure token link. The browser viewer loads the study through the protected API endpoints.
-
-## License
-
-See `LICENSE` for project licensing terms.
+The existing `templates/viewer.html` is served after patient authentication. The viewer receives the study token through `__TOKEN__` and loads original DICOM objects through authenticated APIs.
